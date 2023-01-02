@@ -12,22 +12,27 @@ struct CreateMazeHttpRequest {
 }
 
 #[derive(Debug)]
-struct MazeCell {
-    column: char,
+struct MazeCellCoord {
+    column: u8,
     row: u8,
 }
 
 #[derive(Debug)]
-enum MazeCellKind { Wall, Empty, Entry, Exit}
+enum MazeCellKind {
+    Wall,
+    Empty,
+    Entry,
+    Exit,
+}
 
 #[derive(Debug)]
 struct CreateMazeRequest {
-    entrance: MazeCell,
+    entrance: MazeCellCoord,
     grid_size: (u8, u8),
-    walls: Vec<MazeCell>,
+    walls: Vec<MazeCellCoord>,
 }
 
-impl TryFrom<&str> for MazeCell {
+impl TryFrom<&str> for MazeCellCoord {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -46,11 +51,14 @@ impl TryFrom<&str> for MazeCell {
         }
 
         let c = c.unwrap();
-        if !c.is_uppercase() {
+        if !c.is_ascii_uppercase() {
             return Err(Error {
                 error: String::from("Malformed cell"),
             });
         }
+
+        let mut char_bytes: [u8; 1] = [0; 1];
+        c.encode_utf8(&mut char_bytes);
 
         let row = parts[1].parse::<u8>();
         if row.is_err() {
@@ -58,10 +66,16 @@ impl TryFrom<&str> for MazeCell {
                 error: format!("Malformed cell: {}", row.unwrap_err()),
             });
         }
+        let row = row.unwrap();
+        if row == 0 {
+            return Err(Error {
+                error: format!("Malformed cell: should start at 1"),
+            });
+        }
 
-        Ok(MazeCell {
-            column: c,
-            row: row.unwrap(),
+        Ok(MazeCellCoord {
+            column: char_bytes[0] - 65,
+            row: row - 1,
         })
     }
 }
@@ -120,8 +134,13 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
 
     println!("{:?}", create_maze_req);
 
-    let mut maze : Vec<MazeCellKind> = Vec::with_capacity(create_maze_req.grid_size.0 as usize * create_maze_req.grid_size.1 as usize);
+    let mut maze: Vec<MazeCellKind> = Vec::with_capacity(
+        create_maze_req.grid_size.0 as usize * create_maze_req.grid_size.1 as usize,
+    );
     maze.resize_with(maze.capacity(), || MazeCellKind::Empty);
+
+    for cell in create_maze_req.walls {}
+
     //for cell in create_maze_req.
 
     //    let conn = match Connection::open_in_memory() {
