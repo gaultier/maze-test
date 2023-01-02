@@ -18,6 +18,9 @@ struct MazeCell {
 }
 
 #[derive(Debug)]
+enum MazeCellKind { Wall, Empty, Entry, Exit}
+
+#[derive(Debug)]
 struct CreateMazeRequest {
     entrance: MazeCell,
     grid_size: (u8, u8),
@@ -116,6 +119,11 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
     };
 
     println!("{:?}", create_maze_req);
+
+    let mut maze : Vec<MazeCellKind> = Vec::with_capacity(create_maze_req.grid_size.0 as usize * create_maze_req.grid_size.1 as usize);
+    maze.resize_with(maze.capacity(), || MazeCellKind::Empty);
+    //for cell in create_maze_req.
+
     //    let conn = match Connection::open_in_memory() {
     //        Ok(conn) => conn,
     //        Err(err) => {
