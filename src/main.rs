@@ -1,9 +1,10 @@
-use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use rusqlite::Connection;
+use serde::ser::{Serialize as SerSerialize, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::convert::TryFrom;
 use std::fmt;
-use std::{convert::TryFrom, fmt::format};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateMazeHttpRequest {
@@ -22,7 +23,7 @@ struct CreateMaze {
 
 type Position = usize;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Coord(usize, usize);
 
 impl Coord {
@@ -42,6 +43,15 @@ impl fmt::Display for Coord {
         let row = self.0 + 1;
         let column = char::from_u32(self.1 as u32 + 65u32).unwrap();
         write!(f, "{}{}", column, row)
+    }
+}
+
+impl SerSerialize for Coord {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{}", self))
     }
 }
 
@@ -150,6 +160,7 @@ struct Error {
     error: String,
 }
 
+// BFS traversal
 fn shortest_path(
     maze: &[MazeCellKind],
     entrance_pos: Position,
@@ -325,6 +336,24 @@ fn get_maze_from_db(conn: &Connection, id: usize) -> Result<CreateMaze, Error> {
     })
 }
 
+fn collect_path(nodes: &[Node], exit: Node, width: usize) -> Vec<Coord> {
+    let mut path = Vec::new();
+    let mut current_node = exit;
+
+    loop {
+        let coord = Coord::from_pos(current_node.maze_pos, width);
+        path.push(coord);
+
+        if let Some(parent_idx) = current_node.parent_idx {
+            current_node = nodes[parent_idx];
+        } else {
+            break;
+        }
+    }
+
+    return path;
+}
+
 async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
     let maze_id: usize = path.into_inner();
 
@@ -362,32 +391,24 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
         println!("");
     }
 
-    let path = shortest_path(
+    let (nodes, exit) = match shortest_path(
         &maze,
         Coord::to_pos(&create_maze.entrance, width),
         width,
         height,
-    );
-
-    if path.is_none() {
-        return HttpResponse::BadRequest().json(Error {
-            error: String::from("No path found, invalid maze"),
-        });
-    }
-
-    let path = path.unwrap();
-    let nodes = path.0;
-    let mut node = path.1;
-    loop {
-        let coord = Coord::from_pos(node.maze_pos, width);
-        println!("{}", coord);
-        if let Some(parent_idx) = node.parent_idx {
-            node = nodes[parent_idx];
-        } else {
-            break;
+    ) {
+        None => {
+            return HttpResponse::BadRequest().json(Error {
+                error: String::from("No path found, invalid maze"),
+            });
         }
-    }
-    HttpResponse::Ok().json(3)
+        Some(path) => path,
+    };
+
+
+    let path = collect_path(&nodes, exit, width);
+
+    HttpResponse::Ok().json(path)
 }
 
 #[actix_web::main] // or #[tokio::main]
