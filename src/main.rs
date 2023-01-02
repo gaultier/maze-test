@@ -37,7 +37,7 @@ enum MazeCellKind {
 }
 
 #[derive(Debug)]
-struct CreateMazeRequest {
+struct CreateMaze {
     entrance: Coord,
     grid_size: (u8, u8),
     walls: Vec<Coord>,
@@ -96,7 +96,7 @@ impl TryFrom<&str> for Coord {
     }
 }
 
-impl TryFrom<&web::Json<CreateMazeHttpRequest>> for CreateMazeRequest {
+impl TryFrom<&web::Json<CreateMazeHttpRequest>> for CreateMaze {
     type Error = Error;
 
     fn try_from(value: &web::Json<CreateMazeHttpRequest>) -> Result<Self, Self::Error> {
@@ -127,7 +127,7 @@ impl TryFrom<&web::Json<CreateMazeHttpRequest>> for CreateMazeRequest {
             walls.push(wall.as_str().try_into()?);
         }
 
-        Ok(CreateMazeRequest {
+        Ok(CreateMaze {
             entrance,
             grid_size: (grid_size_width.unwrap(), grid_size_height.unwrap()),
             walls,
@@ -140,7 +140,7 @@ struct Error {
     error: String,
 }
 
-fn bfs(
+fn shortest_path(
     maze: &[MazeCellKind],
     entrance_pos: Position,
     width: usize,
@@ -192,12 +192,8 @@ fn bfs(
                 Coord(adjacent_cell.0 as usize, adjacent_cell.1 as usize).to_pos(width);
             let kind = maze[adjacent_cell_pos];
 
-            match kind {
-                MazeCellKind::Wall => {
-                    continue;
-                }
-                MazeCellKind::Entry => unreachable!(),
-                _ => {}
+            if kind == MazeCellKind::Wall {
+                continue;
             }
 
             if !explored[adjacent_cell_pos] {
@@ -215,22 +211,13 @@ fn bfs(
     return None;
 }
 
-async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
-    let create_maze_req: CreateMazeRequest = match (&create_maze_http_req).try_into() {
-        Err(err) => {
-            return HttpResponse::BadGateway().json(err);
-        }
-        Ok(v) => v,
-    };
-
-    println!("{:?}", create_maze_req);
-
-    let width = create_maze_req.grid_size.0 as usize;
-    let height = create_maze_req.grid_size.1 as usize;
+fn make_maze(create_maze: &CreateMaze) -> Vec<MazeCellKind> {
+    let width = create_maze.grid_size.0 as usize;
+    let height = create_maze.grid_size.1 as usize;
     let mut maze: Vec<MazeCellKind> = Vec::with_capacity(width * height);
     maze.resize(maze.capacity(), MazeCellKind::Empty);
 
-    for cell in create_maze_req.walls {
+    for cell in &create_maze.walls {
         let pos = cell.to_pos(width);
         maze[pos] = MazeCellKind::Wall;
     }
@@ -246,25 +233,35 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
         maze[pos] = MazeCellKind::Exit;
     }
 
-    let entrance_pos = create_maze_req.entrance.to_pos(width);
+    let entrance_pos = create_maze.entrance.to_pos(width);
     maze[entrance_pos] = MazeCellKind::Entry;
-    println!("{:?}", maze);
 
-    for y in 0..height {
-        for x in 0..width {
-            let pos = Coord(x, y).to_pos(width);
-            match maze[pos] {
-                MazeCellKind::Wall => print!("x"),
-                MazeCellKind::Empty => print!("."),
-                MazeCellKind::Entry => print!(">"),
-                MazeCellKind::Exit => print!("o"),
-            }
+    return maze;
+}
+
+async fn create_maze(req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
+    let create_maze: CreateMaze = match (&req).try_into() {
+        Err(err) => {
+            return HttpResponse::BadGateway().json(err);
         }
-        println!("");
-    }
+        Ok(v) => v,
+    };
 
-    let path = bfs(&maze, entrance_pos, width, height);
-    println!("{:?}", path);
+    let maze = make_maze(&create_maze);
+    let width = create_maze.grid_size.0 as usize;
+    let height = create_maze.grid_size.1 as usize;
+    let path = shortest_path(
+        &maze,
+        Coord::to_pos(&create_maze.entrance, width),
+        width,
+        height,
+    );
+
+    if path.is_none() {
+        return HttpResponse::BadRequest().json(Error {
+            error: String::from("No path found, invalid maze"),
+        });
+    }
 
     let path = path.unwrap();
     let nodes = path.0;
