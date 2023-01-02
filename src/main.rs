@@ -1,6 +1,7 @@
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
-//use rusqlite::{Connection, Result};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::convert::TryFrom;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -11,9 +12,16 @@ struct CreateMazeHttpRequest {
     walls: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct CreateMaze {
+    entrance: Coord,
+    grid_size: (u8, u8),
+    walls: Vec<Coord>,
+}
+
 type Position = usize;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Coord(usize, usize);
 
 impl Coord {
@@ -28,19 +36,12 @@ impl Coord {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum MazeCellKind {
     Wall,
     Empty,
     Entry,
     Exit,
-}
-
-#[derive(Debug)]
-struct CreateMaze {
-    entrance: Coord,
-    grid_size: (u8, u8),
-    walls: Vec<Coord>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -239,6 +240,33 @@ fn make_maze(create_maze: &CreateMaze) -> Vec<MazeCellKind> {
     return maze;
 }
 
+fn create_maze_table_in_db(conn: &Connection) {
+    conn.execute("CREATE TABLE IF NOT EXISTS mazes(maze BLOB NOT NULL)", [])
+        .expect("Failed to create maze table");
+}
+
+fn create_maze_in_db(conn: &Connection, create_maze: &CreateMaze) -> Result<usize, Error> {
+    let blob = match serde_json::to_string(&create_maze) {
+        Ok(blob) => blob,
+        Err(err) => {
+            return Err(Error {
+                error: format!("Failed to serialize maze to JSON: {}", err),
+            })
+        }
+    };
+
+    match conn.query_row(
+        "INSERT INTO mazes VALUES (?) RETURNING rowid",
+        [&blob],
+        |row| row.get(0),
+    ) {
+        Ok(res) => Ok(res),
+        Err(err) => Err(Error {
+            error: format!("Failed to save maze in database: {}", err),
+        }),
+    }
+}
+
 async fn create_maze(req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
     let create_maze: CreateMaze = match (&req).try_into() {
         Err(err) => {
@@ -247,49 +275,34 @@ async fn create_maze(req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
         Ok(v) => v,
     };
 
-    let maze = make_maze(&create_maze);
-    let width = create_maze.grid_size.0 as usize;
-    let height = create_maze.grid_size.1 as usize;
-    let path = shortest_path(
-        &maze,
-        Coord::to_pos(&create_maze.entrance, width),
-        width,
-        height,
-    );
 
-    if path.is_none() {
-        return HttpResponse::BadRequest().json(Error {
-            error: String::from("No path found, invalid maze"),
-        });
-    }
+    let conn = match Connection::open("maze") {
+        Ok(conn) => conn,
+        Err(err) => {
+            return HttpResponse::BadGateway().json(Error {
+                error: err.to_string(),
+            })
+        }
+    };
 
-    let path = path.unwrap();
-    let nodes = path.0;
-    let mut node = path.1;
-    loop {
-        let coord = Coord::from_pos(node.maze_pos, width);
-        println!("{:?}", coord);
-        if let Some(parent_idx) = node.parent_idx {
-            node = nodes[parent_idx];
-        } else {
-            break;
+    match create_maze_in_db(&conn, &create_maze) {
+        Ok(id) => {
+            return HttpResponse::Ok().json(json!({
+                "id": id,
+                "maze": create_maze,
+            }));
+        }
+        Err(err) => {
+            return HttpResponse::BadGateway().json(err);
         }
     }
-
-    //    let conn = match Connection::open_in_memory() {
-    //        Ok(conn) => conn,
-    //        Err(err) => {
-    //            return HttpResponse::BadGateway().json(Error {
-    //                error: err.to_string(),
-    //            })
-    //        }
-    //    };
-
-    HttpResponse::Ok().json(3) // <- send response
 }
 
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let conn = Connection::open("maze").expect("Failed to open db connection");
+    create_maze_table_in_db(&conn);
+
     HttpServer::new(|| {
         App::new()
             // enable logger
