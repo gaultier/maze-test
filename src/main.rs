@@ -1,6 +1,5 @@
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use rusqlite::Connection;
-use serde::ser::{Serialize as SerSerialize, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::convert::TryFrom;
@@ -23,7 +22,7 @@ struct CreateMaze {
 
 type Position = usize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct Coord(usize, usize);
 
 impl Coord {
@@ -43,15 +42,6 @@ impl fmt::Display for Coord {
         let row = self.0 + 1;
         let column = char::from_u32(self.1 as u32 + 65u32).unwrap();
         write!(f, "{}{}", column, row)
-    }
-}
-
-impl SerSerialize for Coord {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&format!("{}", self))
     }
 }
 
@@ -332,13 +322,13 @@ fn get_maze_from_db(conn: &Connection, id: usize) -> Result<CreateMaze, Error> {
     })
 }
 
-fn collect_path(nodes: &[Node], exit: &Node, width: usize) -> Vec<Coord> {
+fn collect_path(nodes: &[Node], exit: &Node, width: usize) -> Vec<String> {
     let mut path = Vec::new();
     let mut current_node = *exit;
 
     loop {
         let coord = Coord::from_pos(current_node.maze_pos, width);
-        path.push(coord);
+        path.push(format!("{}", coord));
 
         if let Some(parent_idx) = current_node.parent_idx {
             current_node = nodes[parent_idx];
@@ -347,6 +337,7 @@ fn collect_path(nodes: &[Node], exit: &Node, width: usize) -> Vec<Coord> {
         }
     }
 
+    path.reverse();
     path
 }
 
