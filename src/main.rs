@@ -1,7 +1,7 @@
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 //use rusqlite::{Connection, Result};
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, convert::TryFrom};
+use std::convert::TryFrom;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateMazeHttpRequest {
@@ -21,7 +21,7 @@ impl Coord {
         return self.1 * width + self.0;
     }
 
-    fn from_pos(pos: usize, width: usize) -> Self {
+    fn from_pos(pos: Position, width: usize) -> Self {
         let x = pos % width;
         let y = pos / width;
         return Coord(x, y);
@@ -45,7 +45,7 @@ struct CreateMazeRequest {
 
 #[derive(Debug, Copy, Clone)]
 struct Node {
-    maze_pos: usize,
+    maze_pos: Position,
     parent_idx: Option<usize>,
 }
 
@@ -140,7 +140,12 @@ struct Error {
     error: String,
 }
 
-fn bfs(maze: &[MazeCellKind], entrance_pos: usize, width: usize, height: usize) -> Option<(Vec<Node>, Node)> {
+fn bfs(
+    maze: &[MazeCellKind],
+    entrance_pos: Position,
+    width: usize,
+    height: usize,
+) -> Option<(Vec<Node>, Node)> {
     let mut explored = Vec::with_capacity(width * height);
     explored.resize(explored.capacity(), false);
 
@@ -151,13 +156,13 @@ fn bfs(maze: &[MazeCellKind], entrance_pos: usize, width: usize, height: usize) 
     let mut nodes: Vec<Node> = Vec::with_capacity(width * height);
     nodes.push(root_node);
 
-    let mut work: VecDeque<usize> = VecDeque::new();
-    work.push_front(0);
+    let mut work: Vec<usize> = Vec::new();
+    work.push(nodes.len() - 1);
 
     explored[entrance_pos] = true;
 
     while !work.is_empty() {
-        let work_node_idx = work.pop_front().unwrap();
+        let work_node_idx = work.pop().unwrap();
         let work_node = nodes[work_node_idx];
         let work_pos = work_node.maze_pos;
 
@@ -185,6 +190,15 @@ fn bfs(maze: &[MazeCellKind], entrance_pos: usize, width: usize, height: usize) 
 
             let adjacent_cell_pos =
                 Coord(adjacent_cell.0 as usize, adjacent_cell.1 as usize).to_pos(width);
+            let kind = maze[adjacent_cell_pos];
+
+            match kind {
+                MazeCellKind::Wall => {
+                    continue;
+                }
+                MazeCellKind::Entry => unreachable!(),
+                _ => {}
+            }
 
             if !explored[adjacent_cell_pos] {
                 explored[adjacent_cell_pos] = true;
@@ -193,7 +207,7 @@ fn bfs(maze: &[MazeCellKind], entrance_pos: usize, width: usize, height: usize) 
                     parent_idx: Some(work_node_idx),
                 };
                 nodes.push(adjacent_cell_node);
-                work.push_back(nodes.len() - 1);
+                work.push(nodes.len() - 1);
             }
         }
     }
@@ -238,7 +252,7 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
 
     for y in 0..height {
         for x in 0..width {
-            let pos = y * width + x;
+            let pos = Coord(x, y).to_pos(width);
             match maze[pos] {
                 MazeCellKind::Wall => print!("x"),
                 MazeCellKind::Empty => print!("."),
@@ -251,6 +265,19 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
 
     let path = bfs(&maze, entrance_pos, width, height);
     println!("{:?}", path);
+
+    let path = path.unwrap();
+    let nodes = path.0;
+    let mut node = path.1;
+    loop {
+        let coord = Coord::from_pos(node.maze_pos, width);
+        println!("{:?}", coord);
+        if let Some(parent_idx) = node.parent_idx {
+            node = nodes[parent_idx];
+        } else {
+            break;
+        }
+    }
 
     //    let conn = match Connection::open_in_memory() {
     //        Ok(conn) => conn,
