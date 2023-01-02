@@ -134,12 +134,44 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
 
     println!("{:?}", create_maze_req);
 
-    let mut maze: Vec<MazeCellKind> = Vec::with_capacity(
-        create_maze_req.grid_size.0 as usize * create_maze_req.grid_size.1 as usize,
-    );
+    let width = create_maze_req.grid_size.0 as usize;
+    let height = create_maze_req.grid_size.1 as usize;
+    let mut maze: Vec<MazeCellKind> = Vec::with_capacity(width * height);
     maze.resize_with(maze.capacity(), || MazeCellKind::Empty);
 
-    for cell in create_maze_req.walls {}
+    for cell in create_maze_req.walls {
+        let pos = cell.column as usize * width + cell.row as usize;
+        maze[pos] = MazeCellKind::Wall;
+    }
+
+    let corners: [(usize, usize); 4] = [
+        (0, 0),
+        (width - 1, 0),
+        (0, height - 1),
+        (width - 1, height - 1),
+    ];
+    for corner in corners {
+        let pos = corner.1 * width + corner.0;
+        maze[pos] = MazeCellKind::Exit;
+    }
+
+    let entrance_pos =
+        create_maze_req.entrance.column as usize * width + create_maze_req.entrance.row as usize;
+    maze[entrance_pos] = MazeCellKind::Entry;
+    println!("{:?}", maze);
+
+    for y in 0..height {
+        for x in 0..width {
+            let pos = y * width + x;
+            match maze[pos] {
+                MazeCellKind::Wall => print!("x"),
+                MazeCellKind::Empty => print!("."),
+                MazeCellKind::Entry => print!(">"),
+                MazeCellKind::Exit => print!("o"),
+            }
+        }
+        println!("");
+    }
 
     //for cell in create_maze_req.
 
