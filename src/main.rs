@@ -6,15 +6,18 @@ use std::convert::TryFrom;
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateMazeHttpRequest {
     entrance: String,
+    #[serde(rename(deserialize = "gridSize"))]
     grid_size: String,
     walls: Vec<String>,
 }
 
+#[derive(Debug)]
 struct MazeCell {
     column: char,
     row: u8,
 }
 
+#[derive(Debug)]
 struct CreateMazeRequest {
     entrance: MazeCell,
     grid_size: (u8, u8),
@@ -64,10 +67,10 @@ impl TryFrom<&web::Json<CreateMazeHttpRequest>> for CreateMazeRequest {
     type Error = Error;
 
     fn try_from(value: &web::Json<CreateMazeHttpRequest>) -> Result<Self, Self::Error> {
-        let coords: Vec<&str> = value.entrance.split('x').collect();
+        let coords: Vec<&str> = value.grid_size.split('x').collect();
         if coords.len() != 2 {
             return Err(Error {
-                error: String::from("Malformed entrance"),
+                error: String::from("Malformed grid size"),
             });
         }
 
@@ -108,18 +111,19 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
     let create_maze_req: CreateMazeRequest = match (&create_maze_http_req).try_into() {
         Err(err) => {
             return HttpResponse::BadGateway().json(err);
-        },
+        }
         Ok(v) => v,
     };
 
-//    let conn = match Connection::open_in_memory() {
-//        Ok(conn) => conn,
-//        Err(err) => {
-//            return HttpResponse::BadGateway().json(Error {
-//                error: err.to_string(),
-//            })
-//        }
-//    };
+    println!("{:?}", create_maze_req);
+    //    let conn = match Connection::open_in_memory() {
+    //        Ok(conn) => conn,
+    //        Err(err) => {
+    //            return HttpResponse::BadGateway().json(Error {
+    //                error: err.to_string(),
+    //            })
+    //        }
+    //    };
 
     HttpResponse::Ok().json(3) // <- send response
 }
