@@ -2,6 +2,7 @@ use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::fmt;
 use std::{convert::TryFrom, fmt::format};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +34,14 @@ impl Coord {
         let x = pos % width;
         let y = pos / width;
         return Coord(x, y);
+    }
+}
+
+impl fmt::Display for Coord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let row = self.0 + 1;
+        let column = char::from_u32(self.1 as u32 + 65u32).unwrap();
+        write!(f, "{}{}", column, row)
     }
 }
 
@@ -93,7 +102,7 @@ impl TryFrom<&str> for Coord {
 
         let column = char_bytes[0] - 65;
 
-        Ok(Coord(row as usize, column as usize))
+        Ok(Coord(row as usize - 1, column as usize))
     }
 }
 
@@ -335,6 +344,49 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
         Ok(crate_maze) => crate_maze,
     };
     println!("{} {:?}", maze_id, create_maze);
+
+    let maze = make_maze(&create_maze);
+    let width = create_maze.grid_size.0 as usize;
+    let height = create_maze.grid_size.1 as usize;
+
+    for y in 0..height {
+        for x in 0..width {
+            let pos = Coord(x, y).to_pos(width);
+            match maze[pos] {
+                MazeCellKind::Wall => print!("x"),
+                MazeCellKind::Empty => print!("."),
+                MazeCellKind::Entry => print!(">"),
+                MazeCellKind::Exit => print!("o"),
+            }
+        }
+        println!("");
+    }
+
+    let path = shortest_path(
+        &maze,
+        Coord::to_pos(&create_maze.entrance, width),
+        width,
+        height,
+    );
+
+    if path.is_none() {
+        return HttpResponse::BadRequest().json(Error {
+            error: String::from("No path found, invalid maze"),
+        });
+    }
+
+    let path = path.unwrap();
+    let nodes = path.0;
+    let mut node = path.1;
+    loop {
+        let coord = Coord::from_pos(node.maze_pos, width);
+        println!("{}", coord);
+        if let Some(parent_idx) = node.parent_idx {
+            node = nodes[parent_idx];
+        } else {
+            break;
+        }
+    }
     HttpResponse::Ok().json(3)
 }
 
