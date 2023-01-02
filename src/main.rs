@@ -17,7 +17,7 @@ struct CreateMazeHttpRequest {
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateMaze {
     entrance: Coord,
-    grid_size: (u8, u8),
+    grid_size: (usize, usize),
     walls: Vec<Coord>,
 }
 
@@ -27,14 +27,14 @@ type Position = usize;
 struct Coord(usize, usize);
 
 impl Coord {
-    fn to_pos(self: &Self, width: usize) -> usize {
-        return self.1 * width + self.0;
+    fn to_pos(&self, width: usize) -> usize {
+        self.1 * width + self.0
     }
 
     fn from_pos(pos: Position, width: usize) -> Self {
         let x = pos % width;
         let y = pos / width;
-        return Coord(x, y);
+        Coord(x, y)
     }
 }
 
@@ -80,7 +80,7 @@ impl TryFrom<&str> for Coord {
             });
         }
 
-        let c = parts[0].chars().nth(0);
+        let c = parts[0].chars().next();
         if c.is_none() {
             return Err(Error {
                 error: String::from("Malformed cell"),
@@ -97,7 +97,7 @@ impl TryFrom<&str> for Coord {
         let mut char_bytes: [u8; 1] = [0; 1];
         c.encode_utf8(&mut char_bytes);
 
-        let row = parts[1].parse::<u8>();
+        let row = parts[1].parse::<usize>();
         if row.is_err() {
             return Err(Error {
                 error: format!("Malformed cell: {}", row.unwrap_err()),
@@ -106,13 +106,13 @@ impl TryFrom<&str> for Coord {
         let row = row.unwrap();
         if row == 0 {
             return Err(Error {
-                error: format!("Malformed cell: should start at 1"),
+                error: String::from("Malformed cell: should start at 1"),
             });
         }
 
-        let column = char_bytes[0] - 65;
+        let column = char_bytes[0] as usize - 65;
 
-        Ok(Coord(row as usize - 1, column as usize))
+        Ok(Coord(row - 1, column))
     }
 }
 
@@ -127,13 +127,13 @@ impl TryFrom<&web::Json<CreateMazeHttpRequest>> for CreateMaze {
             });
         }
 
-        let grid_size_width = coords[0].parse::<u8>();
+        let grid_size_width = coords[0].parse::<usize>();
         if grid_size_width.is_err() {
             return Err(Error {
                 error: format!("Malformed grid size: {}", grid_size_width.unwrap_err()),
             });
         }
-        let grid_size_height = coords[1].parse::<u8>();
+        let grid_size_height = coords[1].parse::<usize>();
         if grid_size_height.is_err() {
             return Err(Error {
                 error: format!("Malformed grid size: {}", grid_size_height.unwrap_err()),
@@ -143,7 +143,7 @@ impl TryFrom<&web::Json<CreateMazeHttpRequest>> for CreateMaze {
         let entrance = value.entrance.as_str().try_into()?;
 
         let mut walls = Vec::with_capacity(value.walls.len());
-        for wall in value.walls.as_slice().as_ref() {
+        for wall in value.walls.as_slice() {
             walls.push(wall.as_str().try_into()?);
         }
 
@@ -229,12 +229,12 @@ fn shortest_path(
         }
     }
 
-    return None;
+    None
 }
 
 fn make_maze(create_maze: &CreateMaze) -> Vec<MazeCellKind> {
-    let width = create_maze.grid_size.0 as usize;
-    let height = create_maze.grid_size.1 as usize;
+    let width = create_maze.grid_size.0;
+    let height = create_maze.grid_size.1;
     let mut maze: Vec<MazeCellKind> = Vec::with_capacity(width * height);
     maze.resize(maze.capacity(), MazeCellKind::Empty);
 
@@ -257,7 +257,7 @@ fn make_maze(create_maze: &CreateMaze) -> Vec<MazeCellKind> {
     let entrance_pos = create_maze.entrance.to_pos(width);
     maze[entrance_pos] = MazeCellKind::Entry;
 
-    return maze;
+    maze
 }
 
 fn create_maze_table_in_db(conn: &Connection) {
@@ -305,15 +305,11 @@ async fn create_maze(req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
     };
 
     match create_maze_in_db(&conn, &create_maze) {
-        Ok(id) => {
-            return HttpResponse::Ok().json(json!({
-                "id": id,
-                "maze": create_maze,
-            }));
-        }
-        Err(err) => {
-            return HttpResponse::BadGateway().json(err);
-        }
+        Ok(id) => HttpResponse::Ok().json(json!({
+            "id": id,
+            "maze": create_maze,
+        })),
+        Err(err) => HttpResponse::BadGateway().json(err),
     }
 }
 
@@ -336,9 +332,9 @@ fn get_maze_from_db(conn: &Connection, id: usize) -> Result<CreateMaze, Error> {
     })
 }
 
-fn collect_path(nodes: &[Node], exit: Node, width: usize) -> Vec<Coord> {
+fn collect_path(nodes: &[Node], exit: &Node, width: usize) -> Vec<Coord> {
     let mut path = Vec::new();
-    let mut current_node = exit;
+    let mut current_node = *exit;
 
     loop {
         let coord = Coord::from_pos(current_node.maze_pos, width);
@@ -351,7 +347,7 @@ fn collect_path(nodes: &[Node], exit: Node, width: usize) -> Vec<Coord> {
         }
     }
 
-    return path;
+    path
 }
 
 async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
@@ -372,24 +368,9 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
         }
         Ok(crate_maze) => crate_maze,
     };
-    println!("{} {:?}", maze_id, create_maze);
-
     let maze = make_maze(&create_maze);
-    let width = create_maze.grid_size.0 as usize;
-    let height = create_maze.grid_size.1 as usize;
-
-    for y in 0..height {
-        for x in 0..width {
-            let pos = Coord(x, y).to_pos(width);
-            match maze[pos] {
-                MazeCellKind::Wall => print!("x"),
-                MazeCellKind::Empty => print!("."),
-                MazeCellKind::Entry => print!(">"),
-                MazeCellKind::Exit => print!("o"),
-            }
-        }
-        println!("");
-    }
+    let width = create_maze.grid_size.0;
+    let height = create_maze.grid_size.1;
 
     let (nodes, exit) = match shortest_path(
         &maze,
@@ -405,8 +386,7 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
         Some(path) => path,
     };
 
-
-    let path = collect_path(&nodes, exit, width);
+    let path = collect_path(&nodes, &exit, width);
 
     HttpResponse::Ok().json(path)
 }
