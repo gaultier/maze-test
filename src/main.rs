@@ -1,8 +1,8 @@
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::convert::TryFrom;
+use std::{convert::TryFrom, fmt::format};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateMazeHttpRequest {
@@ -275,7 +275,6 @@ async fn create_maze(req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
         Ok(v) => v,
     };
 
-
     let conn = match Connection::open("maze") {
         Ok(conn) => conn,
         Err(err) => {
@@ -298,6 +297,47 @@ async fn create_maze(req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
     }
 }
 
+fn get_maze_from_db(conn: &Connection, id: usize) -> Result<CreateMaze, Error> {
+    let blob: String = match conn.query_row(
+        "SELECT maze FROM mazes WHERE rowid = ? LIMIT 1",
+        [id],
+        |row| row.get(0),
+    ) {
+        Ok(blob) => blob,
+        Err(err) => {
+            return Err(Error {
+                error: format!("Failed to read maze from database: {}", err),
+            });
+        }
+    };
+
+    serde_json::from_str(&blob).map_err(|err| Error {
+        error: format!("Failed to deserialize maze from JSON: {}", err),
+    })
+}
+
+async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
+    let maze_id: usize = path.into_inner();
+
+    let conn = match Connection::open("maze") {
+        Ok(conn) => conn,
+        Err(err) => {
+            return HttpResponse::BadGateway().json(Error {
+                error: err.to_string(),
+            })
+        }
+    };
+
+    let create_maze = match get_maze_from_db(&conn, maze_id) {
+        Err(err) => {
+            return HttpResponse::BadGateway().json(err);
+        }
+        Ok(crate_maze) => crate_maze,
+    };
+    println!("{} {:?}", maze_id, create_maze);
+    HttpResponse::Ok().json(3)
+}
+
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let conn = Connection::open("maze").expect("Failed to open db connection");
@@ -309,6 +349,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .app_data(web::JsonConfig::default().limit(4096)) // <- limit size of the payload (global configuration)
             .service(web::resource("/maze").route(web::post().to(create_maze)))
+            .service(web::resource("/maze/{id}/solution").route(web::get().to(solve_maze)))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
