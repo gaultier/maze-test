@@ -43,7 +43,7 @@ struct CreateMazeRequest {
     walls: Vec<Coord>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct Node {
     maze_pos: usize,
     parent_idx: Option<usize>,
@@ -140,25 +140,29 @@ struct Error {
     error: String,
 }
 
-fn bfs(maze: &[MazeCellKind], entrance: Coord, width: usize, height: usize) {
+fn bfs(maze: &[MazeCellKind], entrance_pos: usize, width: usize, height: usize) -> Option<(Vec<Node>, Node)> {
     let mut explored = Vec::with_capacity(width * height);
     explored.resize(explored.capacity(), false);
 
-    let mut work: VecDeque<Node> = VecDeque::new();
-    work.push_front(Node {
-        maze_pos: entrance.to_pos(width),
+    let root_node = Node {
+        maze_pos: entrance_pos,
         parent_idx: None,
-    });
+    };
+    let mut nodes: Vec<Node> = Vec::with_capacity(width * height);
+    nodes.push(root_node);
 
-    let entrance_pos = entrance.to_pos(width);
+    let mut work: VecDeque<usize> = VecDeque::new();
+    work.push_front(0);
+
     explored[entrance_pos] = true;
 
     while !work.is_empty() {
-        let w = work.pop_front().unwrap();
-        let work_pos = w.maze_pos;
+        let work_node_idx = work.pop_front().unwrap();
+        let work_node = nodes[work_node_idx];
+        let work_pos = work_node.maze_pos;
 
         if maze[work_pos] == MazeCellKind::Exit {
-            return;
+            return Some((nodes, work_node));
         }
 
         let work_coord = Coord::from_pos(work_pos, width);
@@ -184,13 +188,17 @@ fn bfs(maze: &[MazeCellKind], entrance: Coord, width: usize, height: usize) {
 
             if !explored[adjacent_cell_pos] {
                 explored[adjacent_cell_pos] = true;
-                work.push_back(Node {
+                let adjacent_cell_node = Node {
                     maze_pos: adjacent_cell_pos,
-                    parent_idx: Some(adjacent_cell_pos),
-                });
+                    parent_idx: Some(work_node_idx),
+                };
+                nodes.push(adjacent_cell_node);
+                work.push_back(nodes.len() - 1);
             }
         }
     }
+
+    return None;
 }
 
 async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> HttpResponse {
@@ -240,6 +248,9 @@ async fn create_maze(create_maze_http_req: web::Json<CreateMazeHttpRequest>) -> 
         }
         println!("");
     }
+
+    let path = bfs(&maze, entrance_pos, width, height);
+    println!("{:?}", path);
 
     //    let conn = match Connection::open_in_memory() {
     //        Ok(conn) => conn,
