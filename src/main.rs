@@ -383,7 +383,7 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
 
     let human_readable_path = path
         .iter()
-        .map(|pos| format!("{}", pos))
+        .map(|pos| format!("{}", Coord::from_pos(*pos, width)))
         .collect::<Vec<String>>();
     HttpResponse::Ok().json(human_readable_path)
 }
