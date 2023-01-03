@@ -256,7 +256,7 @@ fn draw_maze(maze: &[MazeCellKind], path: &[Position], width: usize, height: usi
                 },
             }
         }
-        println!("");
+        println!();
     }
 }
 
