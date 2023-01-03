@@ -379,7 +379,7 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
     };
 
     let path = collect_path(&path);
-    //draw_maze(&maze, &path, width, height);
+    draw_maze(&maze, &path, width, height);
 
     let human_readable_path = path
         .iter()
