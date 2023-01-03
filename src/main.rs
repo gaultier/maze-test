@@ -388,7 +388,7 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
     HttpResponse::Ok().json(human_readable_path)
 }
 
-#[actix_web::main] // or #[tokio::main]
+#[actix_web::main] 
 async fn main() -> std::io::Result<()> {
     env_logger::init();
 
