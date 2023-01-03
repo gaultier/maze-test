@@ -379,7 +379,7 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
     };
 
     let path = collect_path(&path);
-    draw_maze(&maze, &path, width, height);
+    //draw_maze(&maze, &path, width, height);
 
     let human_readable_path = path
         .iter()
@@ -390,6 +390,8 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
 
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    env_logger::init();
+
     let conn = Connection::open("maze").expect("Failed to open db connection");
     create_maze_table_in_db(&conn);
 
