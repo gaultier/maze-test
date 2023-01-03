@@ -2,7 +2,6 @@ use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -52,12 +51,6 @@ enum MazeCellKind {
     Empty,
     Entry,
     Exit,
-}
-
-#[derive(Debug, Copy, Clone)]
-struct Node {
-    maze_pos: Position,
-    parent_idx: Option<usize>,
 }
 
 impl TryFrom<&str> for Coord {
@@ -157,65 +150,53 @@ fn shortest_path(
     entrance_pos: Position,
     width: usize,
     height: usize,
-) -> Option<(Vec<Node>, Node)> {
+) -> Option<(Vec<Option<Position>>, Position)> {
     let mut explored = Vec::with_capacity(width * height);
     explored.resize(explored.capacity(), false);
 
-    let root_node = Node {
-        maze_pos: entrance_pos,
-        parent_idx: None,
-    };
-    let mut nodes: Vec<Node> = Vec::with_capacity(width * height);
-    nodes.push(root_node);
+    let mut parents: Vec<Option<Position>> = Vec::with_capacity(width * height);
+    parents.resize(parents.capacity(), None);
 
-    let mut work: Vec<usize> = Vec::new();
-    work.push(nodes.len() - 1);
+    let mut work: Vec<Position> = Vec::with_capacity(10);
 
     explored[entrance_pos] = true;
 
-    while !work.is_empty() {
-        let work_node_idx = work.pop().unwrap();
-        let work_node = nodes[work_node_idx];
-        let work_pos = work_node.maze_pos;
-
+    while let Some(work_pos) = work.pop() {
         if maze[work_pos] == MazeCellKind::Exit {
-            return Some((nodes, work_node));
+            return Some((parents, work_pos));
         }
 
         let work_coord = Coord::from_pos(work_pos, width);
-        let adjacent_cells: [(isize, isize); 4] = [
+        let adjacents: [(isize, isize); 4] = [
             (work_coord.0 as isize + 1, work_coord.1 as isize),
             (work_coord.0 as isize - 1, work_coord.1 as isize),
             (work_coord.0 as isize, work_coord.1 as isize + 1),
             (work_coord.0 as isize, work_coord.1 as isize - 1),
         ];
 
-        for adjacent_cell in adjacent_cells {
+        for adjacent in adjacents {
             // Out of bounds
-            if adjacent_cell.0 < 0
-                || adjacent_cell.1 < 0
-                || adjacent_cell.0 as usize >= width
-                || adjacent_cell.1 as usize >= height
+            if adjacent.0 < 0
+                || adjacent.1 < 0
+                || adjacent.0 as usize >= width
+                || adjacent.1 as usize >= height
             {
                 continue;
             }
 
-            let adjacent_cell_pos =
-                Coord(adjacent_cell.0 as usize, adjacent_cell.1 as usize).to_pos(width);
-            let kind = maze[adjacent_cell_pos];
+            let adjacent_pos =
+                Coord(adjacent.0 as usize, adjacent.1 as usize).to_pos(width);
+            let kind = maze[adjacent_pos];
 
+            // Do not go through walls
             if kind == MazeCellKind::Wall {
                 continue;
             }
 
-            if !explored[adjacent_cell_pos] {
-                explored[adjacent_cell_pos] = true;
-                let adjacent_cell_node = Node {
-                    maze_pos: adjacent_cell_pos,
-                    parent_idx: Some(work_node_idx),
-                };
-                nodes.push(adjacent_cell_node);
-                work.push(nodes.len() - 1);
+            if !explored[adjacent_pos] {
+                explored[adjacent_pos] = true;
+                parents[adjacent_pos] = Some(work_pos);
+                work.push(adjacent_pos);
             }
         }
     }
@@ -323,16 +304,16 @@ fn get_maze_from_db(conn: &Connection, id: usize) -> Result<CreateMaze, Error> {
     })
 }
 
-fn collect_path(nodes: &[Node], exit: &Node, width: usize) -> Vec<String> {
+fn collect_path(nodes: &[Option<usize>], exit: Position, width: usize) -> Vec<String> {
     let mut path = Vec::new();
-    let mut current_node = *exit;
+    let mut current_pos = exit;
 
     loop {
-        let coord = Coord::from_pos(current_node.maze_pos, width);
+        let coord = Coord::from_pos(current_pos, width);
         path.push(format!("{}", coord));
 
-        if let Some(parent_idx) = current_node.parent_idx {
-            current_node = nodes[parent_idx];
+        if let Some(parent_pos) = nodes[current_pos] {
+            current_pos = parent_pos;
         } else {
             break;
         }
@@ -365,7 +346,7 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
     let height = create_maze.grid_size.1;
 
     let entrance_pos = Coord::to_pos(&create_maze.entrance, width);
-    let (nodes, exit) = match shortest_path(&maze, entrance_pos, width, height) {
+    let (parents, exit) = match shortest_path(&maze, entrance_pos, width, height) {
         None => {
             return HttpResponse::BadRequest().json(Error {
                 error: String::from("No path found, invalid maze"),
@@ -374,210 +355,10 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
         Some(path) => path,
     };
 
-    let path = collect_path(&nodes, &exit, width);
-
-    // let sorted = tsort(&maze, width, height);
-    // println!("{:?}", sorted);
-    let tree = make_tree(&maze, entrance_pos, width, height);
-    println!("{:?}", tree);
+    let path = collect_path(&parents, exit, width);
 
     HttpResponse::Ok().json(path)
 }
-
-#[derive(Debug)]
-struct N {
-    pos: Position,
-    kind: MazeCellKind,
-    children: Vec<N>,
-}
-
-fn make_tree(maze: &[MazeCellKind], entrance_pos: Position, width: usize, height: usize) -> N {
-    let mut root = N {
-        pos: entrance_pos,
-        kind: maze[entrance_pos],
-        children: Vec::new(),
-    };
-    let mut visited = HashSet::new();
-    visited.insert(entrance_pos);
-    make_tree_helper(maze, &mut root, width, height, &mut visited);
-
-    root
-}
-
-fn make_tree_helper(
-    maze: &[MazeCellKind],
-    parent: &mut N,
-    width: usize,
-    height: usize,
-    visited_pos: &mut HashSet<usize>,
-) {
-    let coord = Coord::from_pos(parent.pos, width);
-    let adjacent_cells: [(isize, isize); 4] = [
-        (coord.0 as isize + 1, coord.1 as isize),
-        (coord.0 as isize - 1, coord.1 as isize),
-        (coord.0 as isize, coord.1 as isize + 1),
-        (coord.0 as isize, coord.1 as isize - 1),
-    ];
-
-    for adjacent_cell in adjacent_cells {
-        // Out of bounds
-        if adjacent_cell.0 < 0
-            || adjacent_cell.1 < 0
-            || adjacent_cell.0 as usize >= width
-            || adjacent_cell.1 as usize >= height
-        {
-            continue;
-        }
-
-        let adjacent_cell_pos =
-            Coord(adjacent_cell.0 as usize, adjacent_cell.1 as usize).to_pos(width);
-        let kind = maze[adjacent_cell_pos];
-
-        if kind == MazeCellKind::Wall {
-            continue;
-        }
-
-        if visited_pos.contains(&adjacent_cell_pos) {
-            continue;
-        }
-
-        visited_pos.insert(adjacent_cell_pos);
-        let mut adjacent_node = N {
-            pos: adjacent_cell_pos,
-            kind,
-            children: Vec::new(),
-        };
-
-        make_tree_helper(
-            maze,
-            &mut adjacent_node,
-            width,
-            height,
-            visited_pos,
-        );
-        parent.children.push(adjacent_node);
-    }
-}
-
-// fn tsort(
-//     maze: &[MazeCellKind],
-//     entrance_pos: Position,
-//     width: usize,
-//     height: usize,
-// ) -> Result<Vec<usize>, Error> {
-//     let mut permanently_marked = Vec::with_capacity(width * height);
-//     permanently_marked.resize(permanently_marked.capacity(), false);
-
-//     let mut temporarily_marked = Vec::with_capacity(width * height);
-//     temporarily_marked.resize(temporarily_marked.capacity(), false);
-
-//     let mut nodes = maze
-//         .iter()
-//         .map(|k| {
-//             if k == &MazeCellKind::Wall {
-//                 None
-//             } else {
-//                 Some(())
-//             }
-//         })
-//         .collect::<Vec<_>>();
-//     let mut sorted_node_indices = Vec::with_capacity(width * height);
-
-//     while let Some(unmarked_pos) = permanently_marked.iter().position(|m| *m == false) {
-//         tsort_visit(
-//             maze,
-//             unmarked_pos,
-//             &mut nodes,
-//             &mut sorted_node_indices,
-//             &mut permanently_marked,
-//             &mut temporarily_marked,
-//             width,
-//             height,
-//         )?;
-//     }
-//     Ok(sorted_node_indices)
-// }
-
-// fn tsort_visit(
-//     maze: &[MazeCellKind],
-//     pos: usize,
-//     nodes: &mut Vec<Option<()>>,
-//     sorted_node_indices: &mut Vec<usize>,
-//     permanently_marked: &mut [bool],
-//     temporarily_marked: &mut [bool],
-//     width: usize,
-//     height: usize,
-// ) -> Result<(), Error> {
-//     let node = nodes[pos];
-//     if node.is_none() {
-//         return Ok(());
-//     }
-//     let kind = maze[pos];
-
-//     if kind == MazeCellKind::Wall {
-//         return Ok(());
-//     }
-
-//     if permanently_marked[pos] {
-//         return Ok(());
-//     }
-
-//     if temporarily_marked[pos] {
-//         return Err(Error {
-//             error: String::from("Graph has at least one cycle"),
-//         });
-//     }
-
-//     temporarily_marked[pos] = true;
-
-//     let coord = Coord::from_pos(pos, width);
-//     let adjacent_cells: [(isize, isize); 4] = [
-//         (coord.0 as isize + 1, coord.1 as isize),
-//         (coord.0 as isize - 1, coord.1 as isize),
-//         (coord.0 as isize, coord.1 as isize + 1),
-//         (coord.0 as isize, coord.1 as isize - 1),
-//     ];
-
-//     for adjacent_cell in adjacent_cells {
-//         // Out of bounds
-//         if adjacent_cell.0 < 0
-//             || adjacent_cell.1 < 0
-//             || adjacent_cell.0 as usize >= width
-//             || adjacent_cell.1 as usize >= height
-//         {
-//             continue;
-//         }
-
-//         let adjacent_cell_pos =
-//             Coord(adjacent_cell.0 as usize, adjacent_cell.1 as usize).to_pos(width);
-//         let kind = maze[adjacent_cell_pos];
-
-//         if kind == MazeCellKind::Wall {
-//             continue;
-//         }
-
-//         if permanently_marked[pos] || temporarily_marked[pos] {
-//             continue;
-//         }
-
-//         tsort_visit(
-//             maze,
-//             pos,
-//             nodes,
-//             sorted_node_indices,
-//             permanently_marked,
-//             temporarily_marked,
-//             width,
-//             height,
-//         )?;
-//     }
-
-//     temporarily_marked[pos] = false;
-//     permanently_marked[pos] = true;
-
-//     sorted_node_indices.push(pos);
-//     Ok(())
-// }
 
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
