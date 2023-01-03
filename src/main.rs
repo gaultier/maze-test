@@ -144,13 +144,18 @@ struct Error {
     error: String,
 }
 
+struct MazePath {
+    parents: Vec<Option<Position>>,
+    leaf: Position,
+}
+
 // BFS traversal
 fn shortest_path(
     maze: &[MazeCellKind],
     entrance_pos: Position,
     width: usize,
     height: usize,
-) -> Option<(Vec<Option<Position>>, Position)> {
+) -> Option<MazePath> {
     let mut explored = Vec::with_capacity(width * height);
     explored.resize(explored.capacity(), false);
 
@@ -158,12 +163,16 @@ fn shortest_path(
     parents.resize(parents.capacity(), None);
 
     let mut work: Vec<Position> = Vec::with_capacity(10);
+    work.push(entrance_pos);
 
     explored[entrance_pos] = true;
 
     while let Some(work_pos) = work.pop() {
         if maze[work_pos] == MazeCellKind::Exit {
-            return Some((parents, work_pos));
+            return Some(MazePath {
+                parents,
+                leaf: work_pos,
+            });
         }
 
         let work_coord = Coord::from_pos(work_pos, width);
@@ -184,8 +193,7 @@ fn shortest_path(
                 continue;
             }
 
-            let adjacent_pos =
-                Coord(adjacent.0 as usize, adjacent.1 as usize).to_pos(width);
+            let adjacent_pos = Coord(adjacent.0 as usize, adjacent.1 as usize).to_pos(width);
             let kind = maze[adjacent_pos];
 
             // Do not go through walls
@@ -230,6 +238,26 @@ fn make_maze(create_maze: &CreateMaze) -> Vec<MazeCellKind> {
     maze[entrance_pos] = MazeCellKind::Entry;
 
     maze
+}
+
+fn draw_maze(maze: &[MazeCellKind], path: &[Position], width: usize, height: usize) {
+    for y in 0..height {
+        for x in 0..height {
+            let pos = Coord(x, y).to_pos(width);
+            match path.iter().find(|p| **p == pos) {
+                Some(p) if *p == pos => {
+                    print!("*");
+                }
+                _ => match maze[pos] {
+                    MazeCellKind::Wall => print!("x"),
+                    MazeCellKind::Empty => print!("."),
+                    MazeCellKind::Exit => print!("o"),
+                    MazeCellKind::Entry => print!("e"),
+                },
+            }
+        }
+        println!("");
+    }
 }
 
 fn create_maze_table_in_db(conn: &Connection) {
@@ -304,23 +332,18 @@ fn get_maze_from_db(conn: &Connection, id: usize) -> Result<CreateMaze, Error> {
     })
 }
 
-fn collect_path(nodes: &[Option<usize>], exit: Position, width: usize) -> Vec<String> {
-    let mut path = Vec::new();
-    let mut current_pos = exit;
+fn collect_path(path: &MazePath) -> Vec<Position> {
+    let mut path_pos = Vec::with_capacity(10);
+    path_pos.push(path.leaf);
 
-    loop {
-        let coord = Coord::from_pos(current_pos, width);
-        path.push(format!("{}", coord));
-
-        if let Some(parent_pos) = nodes[current_pos] {
-            current_pos = parent_pos;
-        } else {
-            break;
-        }
+    let mut current_pos = path.leaf;
+    while let Some(parent_pos) = path.parents[current_pos] {
+        path_pos.push(parent_pos);
+        current_pos = parent_pos;
     }
 
-    path.reverse();
-    path
+    path_pos.reverse();
+    path_pos
 }
 
 async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
@@ -346,7 +369,7 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
     let height = create_maze.grid_size.1;
 
     let entrance_pos = Coord::to_pos(&create_maze.entrance, width);
-    let (parents, exit) = match shortest_path(&maze, entrance_pos, width, height) {
+    let path = match shortest_path(&maze, entrance_pos, width, height) {
         None => {
             return HttpResponse::BadRequest().json(Error {
                 error: String::from("No path found, invalid maze"),
@@ -355,9 +378,14 @@ async fn solve_maze(path: web::Path<usize>) -> HttpResponse {
         Some(path) => path,
     };
 
-    let path = collect_path(&parents, exit, width);
+    let path = collect_path(&path);
+    draw_maze(&maze, &path, width, height);
 
-    HttpResponse::Ok().json(path)
+    let human_readable_path = path
+        .iter()
+        .map(|pos| format!("{}", pos))
+        .collect::<Vec<String>>();
+    HttpResponse::Ok().json(human_readable_path)
 }
 
 #[actix_web::main] // or #[tokio::main]
